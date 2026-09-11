@@ -1,0 +1,15 @@
+{
+  "name": "problem3-messy-react",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Problem 3 - issues in the given WalletPage component, and a refactor",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "bench": "node bench.mjs"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.12",
+    "typescript": "~5.9.3"
+  }
+}
