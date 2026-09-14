@@ -1,0 +1,13 @@
+sequenceDiagram
+    participant U as Browser
+    participant API as API service
+    U->>API: GET /v1/scoreboard/stream
+    API-->>U: event: snapshot (id 98211) - lb:snapshot, immediately
+    Note over U: render, lastVersion = 98211
+    API-->>U: event: snapshot (id 98212)
+    Note over U: 98212 > 98211 -> apply
+    API--xU: connection dropped (deploy / proxy timeout / network)
+    Note over U,API: EventSource auto-reconnects with backoff + jitter
+    U->>API: GET /v1/scoreboard/stream (Last-Event-ID: 98212)
+    API-->>U: event: snapshot (id 98240) - current, no replay
+    Note over U,API: 98240 > 98212 -> apply, missed versions are irrelevant

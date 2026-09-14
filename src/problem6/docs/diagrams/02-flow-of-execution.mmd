@@ -1,0 +1,56 @@
+sequenceDiagram
+    autonumber
+    participant U as Browser
+    participant API as API service
+    participant PG as PostgreSQL
+    participant RD as Redis
+    participant BC as Broadcaster-leader
+    participant O as Other browsers
+
+    Note over U,API: User starts the action
+    U->>API: POST /v1/actions {actionCode}<br/>Bearer access token
+    API->>API: verify token -> userId, look up catalogue
+    API->>PG: tx: advisory lock (user, action) - VOID oldest over cap<br/>- INSERT ticket (ISSUED, points snapshot)
+    API-->>U: 201 {ticketId, ticketSecret, expiresAt, minDurationMs}
+
+    Note over U,API: ...user actually performs the action...
+
+    U->>API: POST /v1/actions/{id}/complete {ticketSecret, proof}
+    API->>API: verify token -> userId
+    API->>RD: token-bucket check (user, IP) - fail open if Redis is down
+    alt bucket empty
+        RD-->>API: denied
+        API-->>U: 429 RATE_LIMITED
+    end
+    API->>PG: SELECT ticket, clock_timestamp() (no lock)
+    API->>API: pre-checks 1-6 of the table below, then run the proof verifier
+    alt a pre-check fails
+        API->>PG: UPDATE ticket SET status = VOID or EXPIRED (autocommit)
+        API-->>U: 404 / 409 / 410 / 422
+    end
+
+    rect rgb(238, 244, 252)
+    Note over API,PG: One transaction - all of it, or none of it
+    API->>PG: BEGIN
+    API->>PG: INSERT user_scores (user_id) ON CONFLICT DO NOTHING<br/>SELECT ... FROM user_scores WHERE user_id = $1 FOR UPDATE
+    API->>PG: SELECT ... FROM action_tickets WHERE id = $2 FOR UPDATE
+    API->>API: re-check under lock: status = ISSUED, not expired,<br/>cooldown elapsed, daily cap not hit
+    API->>PG: UPDATE action_tickets SET status = REDEEMED, redeemed_at = clock_timestamp()
+    API->>PG: UPDATE user_scores SET score = score + points, last_scored_at = clock_timestamp()<br/>RETURNING score, last_scored_at
+    API->>PG: INSERT INTO score_events (ticket_id UNIQUE, delta, score_after)
+    API->>PG: SELECT rank (bounded count, 5.2)
+    API->>PG: COMMIT
+    end
+
+    API-->>U: 200 {awarded, score, rank, replayed: false}
+
+    Note over BC,O: every 250 ms, independent of request volume
+    BC->>PG: SELECT ... ORDER BY score DESC, last_scored_at ASC, user_id ASC LIMIT 10
+    BC->>BC: hash top-10, compare to the last one this leader published
+    alt changed, or first tick as leader
+        BC->>RD: version = max(lb:version + 1, now_ms) - SET lb:snapshot
+        BC->>RD: PUBLISH scoreboard:updates {version, top}
+        RD-->>API: message (every instance is subscribed)
+        API-->>O: event: snapshot - id: version - data: {...}
+        API-->>U: event: snapshot (same, if U is also streaming)
+    end

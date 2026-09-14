@@ -1,0 +1,8 @@
+stateDiagram-v2
+    [*] --> ISSUED: POST /v1/actions
+    ISSUED --> REDEEMED: secret matches - owner matches<br/>- elapsed >= min_duration - proof ok - caps ok
+    ISSUED --> EXPIRED: clock_timestamp() > expires_at<br/>(on access, plus an hourly sweeper)
+    ISSUED --> VOID: user opens a ticket beyond max_open_tickets<br/>or validation failed (too fast / proof rejected)
+    REDEEMED --> [*]: terminal - a replay returns the original outcome
+    EXPIRED --> [*]
+    VOID --> [*]

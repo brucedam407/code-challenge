@@ -1,0 +1,35 @@
+flowchart TB
+    subgraph Client["Browser"]
+        UI["Scoreboard UI"]
+        ACT["Action UI"]
+    end
+
+    subgraph Edge["Edge / API gateway"]
+        GW["TLS - auth pre-check - IP rate limit"]
+    end
+
+    subgraph API["API service - N stateless instances"]
+        SC["Scoreboard module<br/>tickets - awards - queries"]
+        SSE["SSE hub<br/>holds open connections"]
+    end
+
+    subgraph BC["Broadcaster - leader-elected"]
+        TICK["250 ms tick<br/>query top-10 - diff - publish"]
+    end
+
+    subgraph Data["Data"]
+        PG[("PostgreSQL<br/>source of truth<br/>+ top-10 index")]
+        RD[("Redis<br/>pub/sub - last snapshot<br/>rate limits - leader lock")]
+    end
+
+    ACT -->|"1 open - 2 complete"| GW
+    UI  -->|"3 GET /scoreboard<br/>4 SSE /scoreboard/stream"| GW
+    GW --> SC
+    GW --> SSE
+    SC -->|"tx: score + event + ticket"| PG
+    SC -->|"rate-limit buckets"| RD
+    SC -->|"GET lb:snapshot"| RD
+    TICK -->|"ORDER BY score DESC LIMIT 10"| PG
+    TICK -->|"SET lb:snapshot<br/>PUBLISH scoreboard:updates"| RD
+    RD -.->|"SUBSCRIBE"| SSE
+    SSE -.->|"event: snapshot"| UI
